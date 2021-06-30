@@ -1,0 +1,349 @@
+\pdfoutput=1
+\documentclass{article}
+
+
+% alptex + small aesthetic tweaks + some extra math defs
+\input{preamble/preamble.tex}
+\input{preamble/preamble_math}
+\input{preamble/definitions_basic}
+
+% bibtex import + some code to strip away useless bib info (volume number, isbn, and the ilk), and to standardize capitalization
+% warning: the arxiv uses an outdated bibtex, which causes cryptic and frustrating upload errors 
+% easiest solution: install whatever current arxiv texlive is from ftp://tug.org/historic/systems/texlive/ (download the ISO) and compile using this versions pdflatex and bibtex
+% alternatively, look upon https://github.com/plk/biblatex/wiki/biblatex-and-the-arXiv and despair. 
+\input{preamble/minimalist_biblatex}
+
+\addbibresource{bibs/causality}
+
+\crefformat{equation}{(#2#1#3)}
+\crefformat{figure}{Figure~#2#1#3}
+\crefname{example}{Example}{Examples}
+\crefname{lemma}{Lemma}{Lemmas}
+\crefname{cor}{Corollary}{Corollaries}
+\crefname{theorem}{Theorem}{Theorems}
+\crefname{assumption}{Assumption}{Assumptions}
+
+%********************************************************************
+% Extra definitions
+%********************************************************************
+\usepackage{enumitem} % tight enumerates
+\usepackage[separate-uncertainty=true,multi-part-units=single]{siunitx} % better table control
+
+\newcommand{\maxf}[1]{{\cellcolor[gray]{0.8}} #1}
+\global\long\def\embedding{\lambda}
+
+% Peter's grey box
+\declaretheoremstyle[
+%    postheadspace=\newline,
+spacebelow=\parsep,
+    spaceabove=\parsep,
+  mdframed={
+    backgroundcolor=gray!10!white,     % vv: weird spacing issue, so leaving transpartent for now
+    hidealllines=true, 
+    innertopmargin=8pt, 
+    innerbottommargin=4pt, 
+    skipabove=8pt,
+    skipbelow=10pt,
+    nobreak=true
+}
+]{grayboxed}
+\declaretheorem[style=grayboxed,name=Assumption]{gassumption}
+% \declaretheorem[style=plain]{auxtheorem}
+% \declaretheorem[style=grayboxed,sibling=auxtheorem]{algorithm}
+% \declaretheorem[style=grayboxed,name=Algorithm]{nalgorithm}
+\crefname{gassumption}{Assumption}{Assumptions}
+
+\usepackage{thm-restate}
+\usepackage{bbm}
+%********************************************************************
+% Dan Roy's commenting code
+%********************************************************************
+\usepackage{xcolor}
+\input{preamble/commenting.tex}
+%\input{preamble/myvruler.tex}
+%For submission, uncomment these lines to make all annotations render as blank.
+% \renewcommand{\LATER}[1]{}
+% \renewcommand{\fLATER}[1]{}
+% \renewcommand{\TBD}[1]{}
+% \renewcommand{\fTBD}[1]{}
+% \renewcommand{\PROBLEM}[1]{}
+% \renewcommand{\fPROBLEM}[1]{}
+% \renewcommand{\NA}[1]{#1}  %% Note, NA's pass through!
+
+% frontmatter
+\usepackage[affil-it]{authblk}
+
+\title{Using Embeddings for Causal Inference in Social Networks}
+\date{}
+\author[1]{Irina Cristali}
+\author[1,2]{Victor Veitch}
+\affil[1]{The University of Chicago}
+\affil[2]{Google Research}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+
+We describe a method of performing estimation and inference of causal effects over a social network using observational data, in the presence of unobserved confounders which may affect both the treatment and the response variables. In particular, we focus on accurately estimating \textit{contagion effects}, namely the causal influence that units, or nodes, of the network have on other units. This has historically represented a challenging problem since causal influence, or contagion, is generally confounded with \textit{homophily}, which is the tendency of connected units to share common (latent) traits (\cite{Shalizi:Thomas:2011}, \cite{Shalizi:McFowland:2016}). 
+
+
+\textbf{Example.} Suppose that one is interested in inferring the effect that social pressure has on smoking. More specifically, consider a large population where each person $i$ is a node in an interconnected social group. One can observe the "final outcome" $y_i$ of each such unit, namely whether the person has recently started smoking or not. How to quantify whether a person has begun smoking due to peer pressure? To answer this, we let $t_i$ represent a treatment variable which indicates whether an individual is a smoker or not. We are interested in estimating the effects of the treatment $t_i$ of person $i$ on the outcome $y_j$ of person $j$. Furthermore, let $c_i$ represent a vector of latent confounders, containing information about the person's age, race, education status, income level, and other variables which may affect either the treatment or the response. We also assume that the network itself is correlated with the variable $c$, where the similarities shared by individuals are captured by the network "edges" between them. The main objective is now isolating such implicit similarities and adjusting for them when trying to estimate the pure causal effect of peer influence on the response $y_i$. 
+
+
+As noticed from the example above, estimating causal effects from pure observational data requires adjusting for possible shared network traits which are often not observed. In this paper, we address this issue by developing a causal adjustment method which builds upon and extends previous works (\cite{Veitch:Wang:Blei:2019}, \cite{Ogburn:VanderWeele:2017}, \cite{Ogburn:2018}, \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017}), combining node embedding techniques with general nonparametric estimators for network causal effects. The key advantage of this method is eliminating the need to directly observe the characteristic traits of each unit, since the node embeddings will already carry all the information necessary (and sufficient) for inferring the causal effects. Furthermore, these node embeddings are designed so that they de-couple the unit from the network structure, allowing us to perform statistical inference in more realistic social networks, whose units do not satisfy the i.i.d., or other stringent assumptions, such as exchangeability. We develop this method using the general framework of structural equations models and particularly focus on the scenario in which one can perform interventions on the network ties and structure. After describing our estimation procedure, we provide asymptotics for our estimators that account for the realistic situation in which the number of ties per node increases as the network grows. 
+
+
+\section{Notation and Preliminaries}
+
+In what follows we will consider networks $G_n$ of $n$ individuals, where ties that represent familial, friendship, or acquaintance relationships are encoded through undirected edges between each node. We define the \textit{degree} of a node as the number of ties it has. Moreover, the \textit{neighbors} of node $i$ represent the nodes with which $i$ has ties. Each such connection is naturally captured by the network adjacency matrix $A$, where $A_{ij} = \mathbbm{1}_{\{\mbox{i and j share a tie}\}}$. We also consider the following triple of variables associated with each node:
+
+\begin{align*}
+O_i = (Y_i, X_i, C_i, T_i),
+\end{align*}
+
+\noindent where $Y_i$ is the observed outcome, $X_i$ represents the full set of covariates characterizing each node, $C_i$ is the unobserved subset of $X_i$, which could potentially constitute confounders, and $T_i$ is the treatment. All of these variables also depend on the time $t$. Note that it is sufficient to only focus on the set $C_i$, the unobserved confounders, instead of the full $X_i$, as the $C_i$'s are those whose effects are challenging to estimate. Each unit $O_i$ is sampled i.i.d. from an unknown graph generating process $P$. In the following subsection, we will review the framework developed in \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017} in order to model $P$. 
+
+\section{The model of Ogburn et al., 2020  \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017} }
+\label{sec:Ogburn}
+In \cite{Ogburn2020}, the response $y_i$ is expressed through a structural equation model, as follows
+
+\begin{align}
+\label{eqn:y_i}
+y_i &= f_i[pa_i(Y), \epsilon_{Y_i}],
+\end{align}
+
+
+\noindent where $pa_i(Y)$ is the set of parents, or direct causes, of the response $Y$ for subject $i$, while $\epsilon_{Y_i}$ is an error term. The confounders $C_i$ and the treatment $T_i$ are included in $pa_i(Y)$. Therefore, we can rewrite equation \ref{eqn:y_i} as follows
+
+
+\begin{align*}
+Y_i &= f_Y[\{ T_j: A_{ij} =1\}, \{C_j: A_{ij} =1 \}, \epsilon_{Y_i}], \mbox{ } \forall \mbox{ } i \in \{1, 2, \hdots, n\}.
+\end{align*}
+
+
+\noindent To obtain $Y$, we first need to generate the vector of confounders, and then the treatment variable, which depends upon the confounders. Thus, the order in which the variables $Y_i, C_i, T_i$ are drawn matters. The structural equations defining the latent confounders and the treatment are 
+
+\begin{align*}
+C_i &= f_C[\epsilon_{C_i}] \mbox{ } \forall \mbox{ } i \in \{1, 2, \hdots, n\},\\
+T_i &= f_{T}[\{C_j: A_{ij} =1 \}, \epsilon_{C_i}] \mbox{ } \forall \mbox{ } i \in \{1, 2, \hdots, n\},
+\end{align*}
+
+\noindent where $\epsilon_{C_i}$ and  $\epsilon_{T_i}$ are similarly \textit{exogeneous}, unobserved errors for unit $i$. Note that all of the three introduced distributions -- $f_Y$, $f_C$, and $f_T$ -- can be any function, allowing us to develop our method in full generality. 
+
+This generality however comes with a caveat, namely that it may be challenging to work with potentially very high-dimensional distribution forms of $f_Y$ and $f_T$. As far as $f_C$ is concerned, we can still maintain full generality, since this distribution will be replaced by an embedding vector $\lambda$, as we shall see in what follows (Section \ref{sec:embeddings}). Thereby, next, we take a step further, and make some dimension-reducing assumptions by considering the summary functions $s_Y$ and $s_T$ used for each node $i$:
+
+\begin{align*}
+ T_i &= f_T[W_i, \epsilon_{T_i}] \mbox{ } \forall \mbox{ } i \in \{1, 2, \hdots, n\},\\
+ Y_i &= f_Y[V_i, \epsilon_{Y_i}] \mbox{ } \forall \mbox{ } i \in \{1, 2, \hdots, n\},,
+\end{align*}
+
+\noindent where $W_i = s_{T, i}(\{C_j: A_{ij} =1 \})$ and $V_i = s_{Y, i}(\{ C_j: A_{ij} =1\}, \{T_j: A_{ij} =1\})$. 
+
+Furthermore, Ogburn et al (2020) \cite{Ogburn2020} make the following assumptions:
+
+\begin{itemize}
+\item[i] ($C$ suffices to control confounding for the effect of $T$ on $Y$) $(\epsilon_{X_1}, \hdots, \epsilon_{X_n}) \perp (\epsilon_{Y_1}, \hdots, \epsilon_{Y_n}) | C$, 
+\item[ii ] $\epsilon_{X_1, \hdots \epsilon_{X_n}} | C$ and $\epsilon_{Y_1}, \hdots, \epsilon_{Y_n} | C, X$ are identically distributed, and pairwise independent if they are separated by more than two ties, 
+\item[iii ] the $\epsilon_{C_i}$'s are i.i.d. for $i \in \{1,2, \hdots, n\}$ and are pairwise independent if they are separated by more than two ties. 
+
+\end{itemize}
+
+In order to represent peer influence, as well as other, more general, network actions, we consider \textit{interventions} which set the treatment $T_i$ to user-specified values $t_i^*$, for all $i \in \{1, 2, \hdots, n \}$, as follows
+
+\begin{align*}
+C_i &= f_C[\epsilon_{C_i}] \mbox{ } \forall \mbox{ } i \in \{1, 2, \hdots, n\}, \\
+T_i  &= t_i^* \mbox{ } \forall \mbox{ } i \in \{1, 2, \hdots, n\}, \\
+Y_i(t^*) &= f_Y[V_i(t^*), \epsilon_{Y_i}]  \mbox{ } \forall \mbox{ } i \in \{1, 2, \hdots, n\}, \\
+\end{align*}
+
+
+\noindent where $Y_i(t^*)$ is the counterfactual outcome of person $i$. We will measure social contagion as the average expected outcome of the responses $Y$, under the hypothetical intervention $t^*$, that is $\mathbb{E}[\hat{Y}_n^*]$, where $\hat{Y}_n^* = \frac{1}{n} \sum_{i=1}^n Y_i^*$. 
+
+Let us now present some further notation introduced in \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017}: 
+\begin{align*}
+p_C(c) &= p(C = c)\\
+g(t|w) &= P(T = t| W =w)\\
+g_i(t|w) &= P(T_i = t| W_i =w)\\
+p_{Y}(y|v) &= P(Y = y|V  =  v) \\
+p_{Y,  i}(y|v) &=  P(Y_i = y|V_i= v). 
+\end{align*}
+
+\noindent We further consider the marginal distributions
+\begin{align*}
+h_i(v) &= P(V_i = v) \\
+h_{i, t^*}(v) &= P(V_i^* = v),
+\end{align*}
+
+\noindent where both  $h_i$ and $h_{i, t^*}$ are determined by the distributions $g$ and $p_C$ so they are observed data quantities. Finally, what is the conditional distribution of the response given the network interventions? We denote this by 
+
+$$m(v) = \sum_y yp_Y(y|v). $$
+
+\section{Causal Inference Using Node Embeddings}
+\label{sec:embeddings}
+We introduce network embedding methods as black-box tools for extracting network information that is relevant to prediction tasks. We discuss both embedding based supervised and semi-supervised prediction models. More precisely, for a graph $G = (V, E)$, an embedding is a vector $\lambda = (\lambda_1, \hdots, \lambda_n)$, where each $\lambda_i: V \to \mathbb{R}^p$ is applied to node $i$, encoding or \textit{embedding} the attributes of that node into a low-dimensional real-valued vector. These embedding techniques are designed to contain all of the information necessary for performing subsequent machine learning tasks, and have gathered considerable attention over the past years due to their demonstrated success in computer science, biology, social science, and numerous other applications (\cite{Hamilton:Ying:Leskovec:2018}, \cite{Chamberlain:Clough:Deisenroth:2017}, \cite{Perozzi:Al-Rfou:Skiena:2014}, \cite{Veitch:Austern:Zhou:Blei:Orbanz:2019}). 
+
+
+
+Our main goal is to use the embedding $\lambda$ to obtain identification of the causal effects conditional on the confounders $C$, which include the unobserved latent similarities between the nodes, i.e. the homophily. To this end, we state the following identification theorem, which shows how network embeddings can isolate the causal effects in the presence of unobserved confounders while solving a semi-supervised learning task. 
+
+\begin{theorem} \textbf{Causal Identification via Embeddings in Semi-Supervised Learning Problems.}
+\label{thm:identification}
+Let $G = (V, E)$ be our observed graph. Assume that one wishes to solve a semi-supervised learning task, such as node classification, where labels are available for a small proportion of the graph's nodes. Furthermore, assume that there exist node embeddings $\lambda: V \to \mathbb{R}^p$ applied to each node $i$, in particular, to the vector of unobserved covariates $\hat{C} = (C_1, C_2, \hdots)$ of node $i$, such that the following conditions are satisfied:
+
+
+\begin{itemize}
+\item[i]  $A_{ij} \perp Y_i | \lambda_i$;
+\item[ii]  Assumptions (i-iii) in Ogburn et al. (2020) \cite{Ogburn2020} described in Section \ref{sec:Ogburn};
+\item[iii] $P(V = v| \lambda(c)) > 0, \mbox{ for all } v \mbox{ in the range of} V_i^*$, where $V_i^*$ is the summary function $V_i = s_{Y, i}(\{ C_j: A_{ij} =1\}, \{T_j: A_{ij} =1\})$ under the hypothetical intervention $ T = t^*$. 
+\end{itemize}
+
+
+Then, the causal parameter of interest  $\mathbb{E}[\hat{Y}_n^*]$ is identified by
+
+\begin{align}
+\label{eqn:identification}
+\psi = \frac{1}{n} \sum_{i=1}^n \mathbb{E}[m(V_i^*)] &= \frac{1}{n} \sum_{i=1}^n \sum_v m(v) h_{i, t^*} (v) \\
+&= \frac{1}{n} \sum_{i=1}^n \sum_{c} m(s_{Y, i} (\lambda(c), t^*)) p_C(\lambda(c)),
+\end{align}
+
+
+\noindent where $m(s_{Y, i} (\lambda(c), t^*))$ and $p_C(\lambda(c))$ are the functions defined in Section \ref{sec:Ogburn}, representing quantities which can be estimated from the data, as shown in Section \ref{sec:estimation}.
+\end{theorem}
+
+
+\begin{proof}
+Consider diagram \ref{fig:case2} below which shows the issues that can arise due to the latent, unobserved confounders $C$, when seeking to estimate the causal effect of the treatment variable $T_j$ of subject $j$, on the outcome $Y_i$ of subject $i$. As seen from the left part of figure, there is a backdoor path which passes through the confounders $C_i$, $C_j$, and also depends on whether there is a given edge between nodes $i$ and $j$ (a probability event encoded by the indicator variables $A_{ij}$). Since we cannot solve any estimation task without conditioning on the observed network structure, it will be necessary to condition on $A_{ij}$ when estimating the causal relationship between $T_j$ and $Y_i$. But doing so introduces a collider bias, by inducing dependencies between the variables $C_i$ and $C_j$. We cannot, however, condition on these confounders to adjust for this bias since the confounders are assumed to be unobserved. Therefore, by assuming that condition (i) of the Theorem holds, namely that $A_{ij} \perp Y_i | \lambda_i$, we will address the latter problem, by blocking all possible backdoor paths between $T_j$ and $Y_i$, and eliminating the collider bias. This will thus allow us to accurately perform causal adjustment. 
+
+
+
+\begin{figure}
+  \includegraphics[width=\linewidth]{case1.png}
+  \caption{Identification of causal effects using embeddings in an semi-supervised learning problem. This diagram shows a potential backdoor path passing through the unobserved confounders $C_j$ and $C_i$, while conditioning on the network structure (represented through the adjacency matrix variables $A_{ij}$) when attempting to estimate the effect of the treatment $T_j$ on the response $Y_i$. The figure shows that assuming $A_{ij}$ is conditionally independent from the response $Y_i$ given the embedding $\lambda_i$ of node $i$ blocks problematic backdoor paths and allows for successful causal adjustment.}
+  \label{fig:case1}
+\end{figure}
+\end{proof}
+
+
+
+
+What if one seeks to perform causal adjustment on graphs in an unsupervised learning context? In such procedures, one would not have access to the unit labels anymore, thus assumption (i) of Theorem \ref{thm:identification} is no longer viable. One would however still have access to the proxy structure of the units, namely the matrix $A$, which would again induce a collider biases. 
+
+
+
+\begin{corollary} \textbf{Causal Identification via Embeddings in Unsupervised Learning Problems.}
+\label{cor:identification}
+Assume the set-up of Theorem \ref{thm:identification} and that the following conditions hold true:
+
+
+\begin{itemize}
+\item[i]  $A_{ij} \perp C  | \lambda_i, \mbox{ } \lambda_j$;
+\item[ii]  Assumptions (i-iii) in Ogburn et al. (2020) \cite{Ogburn2020} described in Section \ref{sec:Ogburn};
+\item[iii] $P(V = v| \lambda(c)) > 0, \mbox{ for all } v \mbox{ in the range of} V_i^*$, where $V_i^*$ is the summary function $V_i = s_{Y, i}(\{ C_j: A_{ij} =1\}, \{T_j: A_{ij} =1\})$ under the hypothetical intervention $ T = t^*$. 
+\end{itemize}
+
+Then, the same condition as that of Theorem \ref{thm:identification} holds true, that is,  the causal parameter of interest  $\mathbb{E}[\hat{Y}_n^*]$ is identified by
+
+\begin{align}
+\label{eqn:identification}
+\psi = \frac{1}{n} \sum_{i=1}^n \mathbb{E}[m(V_i^*)] &= \frac{1}{n} \sum_{i=1}^n \sum_v m(v) h_{i, t^*} (v) \\
+&= \frac{1}{n} \sum_{i=1}^n \sum_{c} m(s_{Y, i} (\lambda(c), t^*)) p_C(\lambda(c)),
+\end{align}
+
+
+\noindent where $m(s_{Y, i} (\lambda(c), t^*))$ and $p_C(\lambda(c))$ are the functions defined in Section \ref{sec:Ogburn}, representing quantities which can be estimated from the data.
+\end{corollary}
+
+
+\begin{proof}
+The ideas of the proof are analogous to that discussed in the proof of Theorem \ref{thm:identification}. We include diagram \ref{fig:case2} below which illustrates how conditioning on the embeddings $\lambda_i$ and $
+\lambda_j$ blocks the backdoor paths between  variables $T_j$ and $Y_i$, and hence allows one to perform causal identification. 
+
+\begin{figure}
+  \includegraphics[width=\linewidth]{case2.png}
+  \caption{Identification of causal effects using embeddings in an supervised learning problem. This diagram shows a potential backdoor path passing through the unobserved confounders $C_j$ and $C_i$, while conditioning on the network structure (represented through the adjacency matrix variables $A_{ij}$) when attempting to estimate the effect of the treatment $T_j$ on the response $Y_i$. The figure shows that assuming $A_{ij}$ is conditionally independent from the confounders $C_i$ and $C_j$ given the embeddings $\lambda_i$ and $\lambda_j$ of nodes $i$ and $j$, respectively, blocks problematic backdoor paths and allows for successful causal adjustment.}
+  \label{fig:case2}
+\end{figure}
+\end{proof}
+
+\textbf{Remark.} In both Theorem \ref{thm:identification} and Corollary \ref{cor:identification}, we expect condition (i) to hold true because embedding methods are tools which decouple the properties of the unit and the network structure, and have shown good empirical performance at explaining the local network structure (\cite{Hamilton:Ying:Leskovec:2018}). 
+
+Having established how to identify causal effects using network embeddings, which could consist of \textit{any} established method, we now discuss how to estimate these effects from the data. 
+
+
+\section{Estimation of Causal Effects}
+\label{sec:estimation}
+Recall that our full network data was given by the tuple $O_i = (Y_i, X_i, C_i, T_i) \sim_{i.i.d.} P$, for all $i \in \{1, 2, \hdots, n\}$. The following lemma shows that the distribution of our data can be factorized into a convenient form. 
+
+\begin{lemma}
+
+The probability distribution of the observed data may be factorized as
+
+$$ P(O_i = o) = \mathbb{P}(\lambda(i)) g(t|w) p_y(y|v).$$
+\end{lemma}
+
+
+\begin{proof}
+The proof of the Lemma follows immediately from assumptions (i-iii) in Section \ref{sec:Ogburn}. 
+\end{proof}
+
+
+This lemma tells us that, in order to perform inference, one needs to obtain estimates of three components: $\mathbb{P}(\lambda_i)$, $g$, and $\mathbb(P)(Y|V)$. Furthermore, we notice that we actually do not even need the full $\mathbb(P)(Y|V)$, as, according to Equation \ref{eqn:identification} in Theorem \ref{thm:identification}, the parameter of interest $\psi$ - the average expected outcome - only depends on $\mathbb(P)(Y|V)$ through $m(s_{Y, i}(\lambda(c), t^*))$. Following the procedure described in \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017}, we need to obtain a statistical model $\mathcal{M} = \mathcal{M}_g \times \mathcal{M}_m$, where $\mathcal{M}_g $ is a collection of conditional distributions of $T$ given $W$ such that the true conditional distribution is a member, and $\mathcal{M}_m$ is a collection of expectations of $Y$ relative to conditional distributions of $Y$ given $V$ such that the true conditional expectation of $Y$ given $V$ is a member. We estimate $\psi$ based on the efficient influence function $\Psi: \mathcal{M} \to \mathbb{R}$. Under assumptions (i-iii) in Section \ref{sec:Ogburn}, the efficient influence function for a model $\mathcal{M}$ which makes no distributional assumptions about the unobserved confounder $C$ is given by the following equation
+
+\begin{align}
+\label{eqn:efficient}
+D(o) = \frac{1}{n}\sum_{i=1}^n \left(\mathbb{E}(m(V_i^*)| \lambda_i(c)) -\psi + \frac{\bar{h}_{t^*}(v_i)}{\bar{h}(v_i)}(y_i - m(v_i))) \right), 
+\end{align}
+
+\noindent  where $\bar{h}(v_i) = \frac{1}{n} \sum_{j=1}^n h_j(v_i)$ and $\bar{h}_{t^*} (v_i) = \frac{1}{n}\sum_{j=1}^n h_{j, t^*}(v_i)$. 
+Since this influence function has expected value $0$ at the true $\psi$, we can use it to obtain an unbiased estimate for $\psi$ by setting it equal to zero and solving for $\psi$. To accomplish this, we will invoke the targeted maximum loss-based estimating (TMLE) approach for estimating $\psi$, which is presented in \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017}. We give an overview of the method in Appendix \ref{appendix:estimation}. 
+
+
+Having established how to obtain an estimator $\hat{\psi}$ of the average expected outcome of the responses $Y$, $\psi$, we next state an asymptotic normality result for this estimator, which will enable us to use normal approximations in finite samples, and construct 95\% confidence intervals around the estimated values $\hat{\psi}$. 
+
+\section{Asymptotic Normality}
+
+We establish an asymptotic result for the parameter of interest $\psi$, by considering a sequence of networks $\{G_n = (V_n, E_n)\}$ whose number of nodes goes to infinity ($\lim_{n \to \infty}|V_n| = \infty$), and such that the structural equation models specifying the distributions of the treatment, response, and covariates variables are preserved in the limit. 
+
+For an arbitrary network $G$, let $K_i$ denote the degree of node $i$. Now, for a graph $G_n$ having $n$ nodes, let $K_{max, n} = \max_i{K_i}$ be the maximum degree of all its nodes. Our asymptotic result follows directly from that developed in \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017}. 
+
+\begin{theorem}
+Suppose that $K_{max, n}^2/n \to 0$, as $n  \to \infty$. Under assumptions (i)-(iii) from Section \ref{sec:Ogburn}, and assumption (iii) of Theorem \ref{thm:identification} (positivity assumption), for an arbitrary constant $C_n$ satisfying $n/K_{max, n}^2 \leq C_n \leq n$, we have 
+
+$$\sqrt{C_n} (\hat{\psi} - \psi)  \xrightarrow[]{d} \mathcal{N}(0, \sigma^2), $$
+
+\noindent where $\sigma^2$, the asymptotic variance of $\hat{\psi}$, is given by the variance of the influence curve of the estimator $\psi$. 
+\end{theorem}
+
+
+\begin{proof}
+The proof follows by invoking Theorem 1 of \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017}. 
+\end{proof}
+
+\textbf{Remark.} It may seem stringent to assume that the maximum degree of the graph $G_n$,  $K_{max, n}$, has a growth rate of $O(\sqrt{n})$, given the fact that social networks typically exhibit the "small-world" property (\cite{Durrett:2006}), i.e. there exists a small number of highly influential nodes, which have very large degrees. However, this growth rate can controlled and diminished by further imposing a limit on the number of nodes that influence the few highly influential nodes. 
+
+
+\printbibliography
+
+\newpage
+\appendix
+
+
+\section{The method of Ogburn et al. \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017} for estimating $\psi$}
+\label{appendix:estimation}
+The authors propose a targeted maximum loss-based estimator (TMLE) of $\psi$, as a method of solving the efficient influence function estimating equation \ref{eqn:efficient} for $\psi$. The authors describe constructing a valid loss function $L$ for the regression model $m$, providing initial working estimators $\hat{m}$ of $m$ and $\hat{g}$ of $g$, and a submodel $m_{\epsilon}$ of $\mathcal{M}$, the score of which corresponds to a particular component of the score based on the efficient influence function $D(o)$ and such that $m_{\epsilon} = m(\cdot)$. The TMLE procedure would iteratively estimate $\epsilon$ by minimizing the empirical risk of the loss $L$ at $m_{\epsilon}$, updating the estimates $\hat{m}_{\hat{\epsilon}}$, and repeating the process until convergence. According to \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017}, it actually takes only \textit{one} iteration to solve equation \ref{eqn:efficient}. 
+
+\textbf{How to estimate the nuisance parameters in \ref{eqn:efficient}?} We answer this question by outlining the steps below:
+
+\begin{itemize}
+    \item[1.] We can obtain an estimator $\hat{m}$ for $m$, by either MLE or regression-based methods. 
+    \item[2.] We use the empirical distribution of the learned embeddings $\lambda$ to estimate $p_{\lambda(c)}$. 
+    \item[3.] To obtain an estimator $\hat{\bar{h}}$ of $\bar{h}(v)$ we optimize the log-likelihood function $\sum_{i=1}^n \log \bar{h}(V_i|W_i)$, under the assumption that the pairs $(V_i, W_i)$ are i.i.d.
+    \item[4.] We analogously obtain an estimator $\hat{\bar{h}}_{t^*}$ of $\bar{h}_{t^*}(v)$ 
+\end{itemize}
+
+Finally, the TMLE of $\psi$ is computed by following the five steps in \cite{Ogburn:Sofrygin:Diaz:vanderLaan:2017}. 
+
+\end{document}
+
